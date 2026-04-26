@@ -23,10 +23,10 @@ initLogin(session => {
 // ──────────────────────────────────────────
 // RENDU DES EVENTS
 // ──────────────────────────────────────────
-function renderEvents() {
+async function renderEvents() {
   const grid   = document.getElementById('events-grid');
   const noEvEl = document.getElementById('no-events');
-const events = await getEvents();
+  const events = await getEvents();
 
   grid.innerHTML = '';
 
@@ -47,7 +47,7 @@ const events = await getEvents();
 
 function buildEventCard(ev, index) {
   const admin = isAdmin(currentSession);
-  const totalPlayers = ev.teams.reduce((sum, t) => sum + t.players.length, 0);
+  const totalPlayers = (ev.teams || []).reduce((sum, t) => sum + (t.players || []).length, 0);
 
   const card = document.createElement('div');
   card.className = 'event-card';
@@ -63,7 +63,7 @@ function buildEventCard(ev, index) {
     ${ev.date ? `<div class="event-card-date">📅 ${formatDate(ev.date)}</div>` : ''}
     <div class="event-card-stats">
       <div class="event-stat">
-        <span class="event-stat-val">${ev.teams.length}</span>
+        <span class="event-stat-val">${(ev.teams || []).length}</span>
         <span class="event-stat-label">Équipes</span>
       </div>
       <div class="event-stat">
@@ -104,15 +104,15 @@ function bindEventPageListeners() {
   });
 
   // Sauvegarder event
-  document.getElementById('save-event-btn')?.addEventListener('click', () => {
-    const name   = document.getElementById('ev-name').value.trim();
-    const teams  = document.getElementById('ev-teams').value;
+  document.getElementById('save-event-btn')?.addEventListener('click', async () => {
+    const name    = document.getElementById('ev-name').value.trim();
+    const teams   = document.getElementById('ev-teams').value;
     const players = document.getElementById('ev-players').value;
-    const date   = document.getElementById('ev-date').value;
+    const date    = document.getElementById('ev-date').value;
 
     if (!name) { toast('Donnez un nom à l\'event.', 'error'); return; }
 
-    createEvent({ name, teamCount: teams, playersPerTeam: players, date });
+    await createEvent({ name, teamCount: teams, playersPerTeam: players, date });
     closeModal('modal-create-event');
     document.getElementById('ev-name').value = '';
     renderEvents();
@@ -120,9 +120,9 @@ function bindEventPageListeners() {
   });
 
   // Confirmer suppression event
-  document.getElementById('confirm-delete-event-btn')?.addEventListener('click', () => {
+  document.getElementById('confirm-delete-event-btn')?.addEventListener('click', async () => {
     if (!pendingDeleteEventId) return;
-    deleteEvent(pendingDeleteEventId);
+    await deleteEvent(pendingDeleteEventId);
     pendingDeleteEventId = null;
     closeModal('modal-delete-event');
     renderEvents();
