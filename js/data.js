@@ -1,59 +1,72 @@
 /**
  * data.js — Couche données : events, équipes, joueurs
- * Utilise localStorage comme base de données simulée.
+ * Utilise Firebase Firestore comme base de données.
  * CastHub / Minecraft Event Manager
  */
 
-const STORAGE_EVENTS = 'casthub_events';
+import {
+  collection,
+  getDocs,
+  addDoc,
+  deleteDoc,
+  updateDoc,
+  getDoc,
+  doc,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
 // ──────────────────────────────────────────
 // Utilitaires
 // ──────────────────────────────────────────
+
 function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
-import { collection, getDocs, addDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
-
-// récupérer les events
-export async function getEvents() {
-  const snap = await getDocs(collection(window.db, "events"));
-  return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+/** Retourne l'instance Firestore (initialisée dans index.html / event.html) */
+function getDb() {
+  return window.db;
 }
 
-// créer un event
-export async function createEvent(data) {
-  const docRef = await addDoc(collection(window.db, "events"), data);
-  return { id: docRef.id, ...data };
+/** Récupère un document event complet depuis Firestore */
+async function fetchEventDoc(eventId) {
+  const snap = await getDoc(doc(getDb(), "events", eventId));
+  return snap.exists() ? { id: snap.id, ...snap.data() } : null;
 }
 
-function saveEvents(events) {
-  localStorage.setItem(STORAGE_EVENTS, JSON.stringify(events));
+/** Sauvegarde le tableau teams dans un document event */
+async function saveTeams(eventId, teams) {
+  await updateDoc(doc(getDb(), "events", eventId), { teams });
 }
 
 // ══════════════════════════════════════════
 // EVENTS
 // ══════════════════════════════════════════
 
-/** Retourne tous les events */
-export function getEvents() {
-  return loadEvents();
+/**
+ * Retourne tous les events.
+ * @returns {Promise<Array>}
+ */
+export async function getEvents() {
+  const snap = await getDocs(collection(getDb(), "events"));
+  return snap.docs.map(d => ({ id: d.id, ...d.data() }));
 }
 
-/** Retourne un event par id */
-export function getEvent(id) {
-  return loadEvents().find(e => e.id === id) || null;
+/**
+ * Retourne un event par id.
+ * @param {string} id
+ * @returns {Promise<object|null>}
+ */
+export async function getEvent(id) {
+  return await fetchEventDoc(id);
 }
 
 /**
  * Crée un nouvel event.
  * @param {{ name: string, teamCount: number, playersPerTeam: number, date?: string }} data
- * @returns {object} l'event créé
+ * @returns {Promise<object>} l'event créé
  */
-export function createEvent({ name, teamCount, playersPerTeam, date }) {
-  const events = loadEvents();
-  const event = {
-    id: uid(),
+export async function createEvent({ name, teamCount, playersPerTeam, date }) {
+  const data = {
     name: name.trim(),
     teamCount: parseInt(teamCount) || 8,
     playersPerTeam: parseInt(playersPerTeam) || 4,
@@ -61,15 +74,16 @@ export function createEvent({ name, teamCount, playersPerTeam, date }) {
     teams: [],
     createdAt: Date.now(),
   };
-  events.push(event);
-  saveEvents(events);
-  return event;
+  const ref = await addDoc(collection(getDb(), "events"), data);
+  return { id: ref.id, ...data };
 }
 
-/** Supprime un event par id */
-export function deleteEvent(id) {
-  const events = loadEvents().filter(e => e.id !== id);
-  saveEvents(events);
+/**
+ * Supprime un event par id.
+ * @param {string} id
+ */
+export async function deleteEvent(id) {
+  await deleteDoc(doc(getDb(), "events", id));
 }
 
 // ══════════════════════════════════════════
@@ -80,10 +94,10 @@ export function deleteEvent(id) {
  * Ajoute une équipe à un event.
  * @param {string} eventId
  * @param {{ name: string, description?: string, score?: number }} data
+ * @returns {Promise<object|null>} l'équipe créée
  */
-export function addTeam(eventId, { name, description, score }) {
-  const events = loadEvents();
-  const event = events.find(e => e.id === eventId);
+export async function addTeam(eventId, { name, description, score }) {
+  const event = await fetchEventDoc(eventId);
   if (!event) return null;
 
   const team = {
@@ -94,45 +108,55 @@ export function addTeam(eventId, { name, description, score }) {
     players: [],
     createdAt: Date.now(),
   };
-  event.teams.push(team);
-  saveEvents(events);
+
+  const teams = [...(event.teams || []), team];
+  await saveTeams(eventId, teams);
   return team;
 }
 
 /**
  * Met à jour les infos d'une équipe (nom, description, score).
+ * @param {string} eventId
+ * @param {string} teamId
+ * @param {object} fields
  */
-export function updateTeam(eventId, teamId, fields) {
-  const events = loadEvents();
-  const event = events.find(e => e.id === eventId);
+export async function updateTeam(eventId, teamId, fields) {
+  const event = await fetchEventDoc(eventId);
   if (!event) return null;
-  const team = event.teams.find(t => t.id === teamId);
-  if (!team) return null;
 
-  if (fields.name        !== undefined) team.name        = fields.name.trim();
-  if (fields.description !== undefined) team.description = fields.description.trim();
-  if (fields.score       !== undefined) team.score       = parseInt(fields.score) || 0;
+  const teams = (event.teams || []).map(t => {
+    if (t.id !== teamId) return t;
+    return {
+      ...t,
+      ...(fields.name        !== undefined && { name:        fields.name.trim() }),
+      ...(fields.description !== undefined && { description: fields.description.trim() }),
+      ...(fields.score       !== undefined && { score:       parseInt(fields.score) || 0 }),
+    };
+  });
 
-  saveEvents(events);
-  return team;
+  await saveTeams(eventId, teams);
 }
 
-/** Supprime une équipe */
-export function deleteTeam(eventId, teamId) {
-  const events = loadEvents();
-  const event = events.find(e => e.id === eventId);
+/**
+ * Supprime une équipe.
+ * @param {string} eventId
+ * @param {string} teamId
+ */
+export async function deleteTeam(eventId, teamId) {
+  const event = await fetchEventDoc(eventId);
   if (!event) return;
-  event.teams = event.teams.filter(t => t.id !== teamId);
-  saveEvents(events);
+  await saveTeams(eventId, (event.teams || []).filter(t => t.id !== teamId));
 }
 
 /**
  * Retourne les équipes d'un event triées par score décroissant.
+ * @param {string} eventId
+ * @returns {Promise<Array>}
  */
-export function getRankedTeams(eventId) {
-  const event = getEvent(eventId);
+export async function getRankedTeams(eventId) {
+  const event = await fetchEventDoc(eventId);
   if (!event) return [];
-  return [...event.teams].sort((a, b) => b.score - a.score);
+  return [...(event.teams || [])].sort((a, b) => b.score - a.score);
 }
 
 // ══════════════════════════════════════════
@@ -144,13 +168,11 @@ export function getRankedTeams(eventId) {
  * @param {string} eventId
  * @param {string} teamId
  * @param {{ name: string, description?: string }} data
+ * @returns {Promise<object|null>} le joueur créé
  */
-export function addPlayer(eventId, teamId, { name, description }) {
-  const events = loadEvents();
-  const event = events.find(e => e.id === eventId);
+export async function addPlayer(eventId, teamId, { name, description }) {
+  const event = await fetchEventDoc(eventId);
   if (!event) return null;
-  const team = event.teams.find(t => t.id === teamId);
-  if (!team) return null;
 
   const player = {
     id: uid(),
@@ -158,37 +180,59 @@ export function addPlayer(eventId, teamId, { name, description }) {
     description: description?.trim() || '',
     createdAt: Date.now(),
   };
-  team.players.push(player);
-  saveEvents(events);
+
+  const teams = (event.teams || []).map(t => {
+    if (t.id !== teamId) return t;
+    return { ...t, players: [...(t.players || []), player] };
+  });
+
+  await saveTeams(eventId, teams);
   return player;
 }
 
 /**
  * Met à jour un joueur (name, description).
+ * @param {string} eventId
+ * @param {string} teamId
+ * @param {string} playerId
+ * @param {object} fields
  */
-export function updatePlayer(eventId, teamId, playerId, fields) {
-  const events = loadEvents();
-  const event = events.find(e => e.id === eventId);
+export async function updatePlayer(eventId, teamId, playerId, fields) {
+  const event = await fetchEventDoc(eventId);
   if (!event) return null;
-  const team = event.teams.find(t => t.id === teamId);
-  if (!team) return null;
-  const player = team.players.find(p => p.id === playerId);
-  if (!player) return null;
 
-  if (fields.name        !== undefined) player.name        = fields.name.trim();
-  if (fields.description !== undefined) player.description = fields.description.trim();
+  const teams = (event.teams || []).map(t => {
+    if (t.id !== teamId) return t;
+    return {
+      ...t,
+      players: (t.players || []).map(p => {
+        if (p.id !== playerId) return p;
+        return {
+          ...p,
+          ...(fields.name        !== undefined && { name:        fields.name.trim() }),
+          ...(fields.description !== undefined && { description: fields.description.trim() }),
+        };
+      }),
+    };
+  });
 
-  saveEvents(events);
-  return player;
+  await saveTeams(eventId, teams);
 }
 
-/** Supprime un joueur */
-export function deletePlayer(eventId, teamId, playerId) {
-  const events = loadEvents();
-  const event = events.find(e => e.id === eventId);
+/**
+ * Supprime un joueur.
+ * @param {string} eventId
+ * @param {string} teamId
+ * @param {string} playerId
+ */
+export async function deletePlayer(eventId, teamId, playerId) {
+  const event = await fetchEventDoc(eventId);
   if (!event) return;
-  const team = event.teams.find(t => t.id === teamId);
-  if (!team) return;
-  team.players = team.players.filter(p => p.id !== playerId);
-  saveEvents(events);
+
+  const teams = (event.teams || []).map(t => {
+    if (t.id !== teamId) return t;
+    return { ...t, players: (t.players || []).filter(p => p.id !== playerId) };
+  });
+
+  await saveTeams(eventId, teams);
 }
