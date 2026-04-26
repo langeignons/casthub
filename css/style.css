@@ -752,6 +752,11 @@ select { cursor: pointer; }
   padding: 20px;
   animation: fadeInBg 0.2s ease;
 }
+
+.modal.hidden {
+  display: none !important;
+}
+
 @keyframes fadeInBg { from { opacity: 0; } to { opacity: 1; } }
 
 .modal-box {
